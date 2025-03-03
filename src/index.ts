@@ -1,5 +1,5 @@
 import { Aws, CfnJson, Duration } from 'aws-cdk-lib';
-import { Cluster, HelmChart } from 'aws-cdk-lib/aws-eks';
+import { AuthenticationMode, CfnAccessEntry, Cluster, HelmChart } from 'aws-cdk-lib/aws-eks';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { SqsQueue } from 'aws-cdk-lib/aws-events-targets';
 import { CfnInstanceProfile, IManagedPolicy, ManagedPolicy, Policy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
@@ -108,13 +108,24 @@ export class Karpenter extends Construct {
       roles: [this.nodeRole.roleName],
     });
 
-    this.cluster.awsAuth.addRoleMapping(this.nodeRole, {
-      username: 'system:node:{{EC2PrivateDNSName}}',
-      groups: [
-        'system:bootstrappers',
-        'system:nodes',
-      ],
-    });
+    if (this.cluster.authenticationMode == AuthenticationMode.CONFIG_MAP) {
+      // If the cluster we're operating on still uses ConfigMap as authentication mode, we will adjust
+      // and add the role mapping there.
+      this.cluster.awsAuth.addRoleMapping(this.nodeRole, {
+        username: 'system:node:{{EC2PrivateDNSName}}',
+        groups: [
+          'system:bootstrappers',
+          'system:nodes',
+        ],
+      });
+    } else {
+      // Otherwise: we will create the necessary EKS access entry
+      new CfnAccessEntry(this, 'KarpenterAccessEntry', {
+        clusterName: this.cluster.clusterName,
+        principalArn: this.nodeRole.roleArn,
+        type: 'EC2_LINUX',
+      });
+    }
 
     /**
      * For the Karpenter controller to be able to talk to the AWS APIs, we need to set up a few

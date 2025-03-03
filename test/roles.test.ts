@@ -29,7 +29,7 @@ describe('Karpenter installation', () => {
     t.hasResource('Custom::AWSCDK-EKS-Cluster', {});
     t.resourceCountIs('AWS::IAM::Role', 8);
     t.hasResourceProperties('AWS::IAM::InstanceProfile', {
-      Roles: Match.arrayWith( [
+      Roles: Match.arrayWith([
         Match.objectLike({
           Ref: Match.stringLikeRegexp('^.*PreExistingRole.*$'),
         }),

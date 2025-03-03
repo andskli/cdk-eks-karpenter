@@ -1,17 +1,23 @@
 import { KubectlV31Layer } from '@aws-cdk/lambda-layer-kubectl-v31';
-import { App, CfnOutput, Stack, StackProps } from 'aws-cdk-lib';
+import { Stack, StackProps } from 'aws-cdk-lib';
 import { Vpc } from 'aws-cdk-lib/aws-ec2';
-import { AuthenticationMode, Cluster, CoreDnsComputeType, KubernetesVersion } from 'aws-cdk-lib/aws-eks';
+import { AuthenticationMode, Cluster, KubernetesVersion, NodegroupAmiType, TaintEffect } from 'aws-cdk-lib/aws-eks';
 import { ManagedPolicy, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
+import { Karpenter } from '../../src';
 
-import { Karpenter } from '../src';
+export interface TestKarpenterStackProps extends StackProps {
+  readonly vpc: Vpc;
+}
 
-class TestEKSStack extends Stack {
-  constructor(scope: Construct, id: string, props: StackProps = {}) {
-    super(scope, id, props);
+export class TestKarpenterStack extends Stack {
+  public readonly vpc: Vpc;
+  public readonly cluster: Cluster;
 
-    const vpc = new Vpc(this, 'testVPC', {
+  constructor(scope: Construct, id: string) {
+    super(scope, id);
+
+    this.vpc = new Vpc(this, 'VPC', {
       natGateways: 1,
     });
 
@@ -23,33 +29,42 @@ class TestEKSStack extends Stack {
       ],
     });
 
-    const cluster = new Cluster(this, 'testCluster', {
-      vpc: vpc,
+    const kubectlLayer = new KubectlV31Layer(this, 'KubectlLayer');
+
+    this.cluster = new Cluster(this, 'cluster', {
+      vpc: this.vpc,
       role: clusterRole,
       version: KubernetesVersion.V1_31, // OCI HELM repo only supported by new version.
       defaultCapacity: 0,
-      coreDnsComputeType: CoreDnsComputeType.FARGATE,
-      kubectlLayer: new KubectlV31Layer(this, 'KubectlLayer'), // new Kubectl lambda layer
-      authenticationMode: AuthenticationMode.API_AND_CONFIG_MAP,
+      kubectlLayer: kubectlLayer,
+      authenticationMode: AuthenticationMode.API,
     });
 
-    cluster.addFargateProfile('karpenter', {
-      selectors: [
+    this.cluster.addNodegroupCapacity('system-nodes', {
+      amiType: NodegroupAmiType.BOTTLEROCKET_X86_64,
+      minSize: 0,
+      maxSize: 2,
+      desiredSize: 1,
+      taints: [
         {
-          namespace: 'karpenter',
-        },
-        {
-          namespace: 'kube-system',
-          labels: {
-            'k8s-app': 'kube-dns',
-          },
+          effect: TaintEffect.NO_SCHEDULE,
+          key: 'CriticalAddonsOnly',
+          value: 'true',
         },
       ],
     });
 
     const karpenter = new Karpenter(this, 'Karpenter', {
-      cluster: cluster,
+      cluster: this.cluster,
       version: '1.1.1', // test a recent version
+      helmExtraValues: {
+        tolerations: [
+          {
+            key: 'CriticalAddonsOnly',
+            operator: 'Exists',
+          },
+        ],
+      },
     });
 
     const nodeClass = karpenter.addEC2NodeClass('nodeclass', {
@@ -62,14 +77,14 @@ class TestEKSStack extends Stack {
       subnetSelectorTerms: [
         {
           tags: {
-            Name: `${this.stackName}/${vpc.node.id}/PrivateSubnet*`,
+            Name: `${this.stackName}/${this.vpc.node.id}/PrivateSubnet*`,
           },
         },
       ],
       securityGroupSelectorTerms: [
         {
           tags: {
-            'aws:eks:cluster-name': cluster.clusterName,
+            'aws:eks:cluster-name': this.cluster.clusterName,
           },
         },
       ],
@@ -101,28 +116,5 @@ class TestEKSStack extends Stack {
     });
 
     karpenter.addManagedPolicyToKarpenterRole(ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'));
-
-    new CfnOutput(this, 'ClusterName', {
-      value: cluster.clusterName,
-    });
-
-    new CfnOutput(this, 'ClusterAdminRole', {
-      value: cluster.adminRole.roleArn,
-    });
-
-    new CfnOutput(this, 'UpdateKubeConfigCommand', {
-      value: `aws eks update-kubeconfig --name ${cluster.clusterName} --role-arn ${cluster.adminRole.roleArn}`,
-    });
   }
 }
-
-const app = new App();
-
-new TestEKSStack(app, 'test', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
-  },
-});
-
-app.synth();

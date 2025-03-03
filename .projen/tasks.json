@@ -32,14 +32,15 @@
         "CHANGELOG": "dist/changelog.md",
         "BUMPFILE": "dist/version.txt",
         "RELEASETAG": "dist/releasetag.txt",
-        "RELEASE_TAG_PREFIX": ""
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^12"
       },
       "steps": [
         {
           "builtin": "release/bump-version"
         }
       ],
-      "condition": "! git log --oneline -1 | grep -q \"chore(release):\""
+      "condition": "git log --oneline -1 | grep -qv \"chore(release):\""
     },
     "clobber": {
       "name": "clobber",
@@ -124,9 +125,13 @@
     "eslint": {
       "name": "eslint",
       "description": "Runs eslint against the codebase",
+      "env": {
+        "ESLINT_USE_FLAT_CONFIG": "false"
+      },
       "steps": [
         {
-          "exec": "eslint --ext .ts,.tsx --fix --no-error-on-unmatched-pattern src test build-tools .projenrc.js"
+          "exec": "eslint --ext .ts,.tsx --fix --no-error-on-unmatched-pattern $@ src test build-tools .projenrc.js",
+          "receiveArgs": true
         }
       ]
     },
@@ -148,12 +153,37 @@
         }
       ]
     },
+    "integ": {
+      "name": "integ",
+      "description": "Run integration snapshot tests",
+      "steps": [
+        {
+          "exec": "integ-runner $@ --language typescript",
+          "receiveArgs": true
+        }
+      ]
+    },
+    "integ:update": {
+      "name": "integ:update",
+      "description": "Run and update integration snapshot tests",
+      "steps": [
+        {
+          "exec": "integ-runner $@ --language typescript --update-on-failed",
+          "receiveArgs": true
+        }
+      ]
+    },
     "package": {
       "name": "package",
       "description": "Creates the distribution package",
       "steps": [
         {
-          "exec": "if [ ! -z ${CI} ]; then rsync -a . .repo --exclude .git --exclude node_modules && rm -rf dist && mv .repo dist; else npx projen package-all; fi"
+          "spawn": "package:js",
+          "condition": "node -e \"if (!process.env.CI) process.exit(1)\""
+        },
+        {
+          "spawn": "package-all",
+          "condition": "node -e \"if (process.env.CI) process.exit(1)\""
         }
       ]
     },
@@ -196,6 +226,10 @@
         }
       ]
     },
+    "post-upgrade": {
+      "name": "post-upgrade",
+      "description": "Runs after upgrading dependencies"
+    },
     "pre-compile": {
       "name": "pre-compile",
       "description": "Prepare the project for compilation"
@@ -235,6 +269,9 @@
         },
         {
           "spawn": "eslint"
+        },
+        {
+          "spawn": "integ"
         }
       ]
     },
@@ -242,7 +279,7 @@
       "name": "test:deploy",
       "steps": [
         {
-          "exec": "npx cdk deploy -a \"npx ts-node -P tsconfig.dev.json --prefer-ts-exts test/integ.karpenter.ts\""
+          "exec": "npx cdk deploy -a \"npx ts-node -P tsconfig.dev.json --prefer-ts-exts test/integ.karpenter.ts\" --all --require-approval=never"
         }
       ]
     },
@@ -250,7 +287,15 @@
       "name": "test:destroy",
       "steps": [
         {
-          "exec": "npx cdk destroy -a \"npx ts-node -P tsconfig.dev.json --prefer-ts-exts test/integ.karpenter.ts\""
+          "exec": "npx cdk destroy -a \"npx ts-node -P tsconfig.dev.json --prefer-ts-exts test/integ.karpenter.ts\" --all --force"
+        }
+      ]
+    },
+    "test:e2e": {
+      "name": "test:e2e",
+      "steps": [
+        {
+          "exec": "npx integ-runner --parallel-regions=eu-west-1 ./test/integration/*.test.ts --update-on-failed"
         }
       ]
     },
@@ -279,11 +324,36 @@
         "CHANGELOG": "dist/changelog.md",
         "BUMPFILE": "dist/version.txt",
         "RELEASETAG": "dist/releasetag.txt",
-        "RELEASE_TAG_PREFIX": ""
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^12"
       },
       "steps": [
         {
           "builtin": "release/reset-version"
+        }
+      ]
+    },
+    "upgrade": {
+      "name": "upgrade",
+      "description": "upgrade dependencies",
+      "env": {
+        "CI": "0"
+      },
+      "steps": [
+        {
+          "exec": "npx npm-check-updates@16 --upgrade --target=minor --peer --no-deprecated --dep=dev,peer,prod,optional --filter=@aws-cdk/integ-tests-alpha,@aws-cdk/lambda-layer-kubectl-v29,@aws-cdk/lambda-layer-kubectl-v30,@aws-cdk/lambda-layer-kubectl-v31,@babel/preset-env,@babel/preset-typescript,@types/jest,@types/node,@types/semver,babel-jest,enhanced-resolve,eslint-import-resolver-typescript,eslint-plugin-import,jest,jest-unit,jsii-diff,jsii-pacmak,projen,ts-jest,ts-node,typescript,semver,@aws-cdk/cli-lib-alpha,@aws-crypto/sha256-js,@aws-sdk/client-cloudformation,@aws-sdk/client-eks,@aws-sdk/client-sts,@aws-sdk/credential-provider-node,@kubernetes/client-node,@smithy/protocol-http,@smithy/signature-v4"
+        },
+        {
+          "exec": "yarn install --check-files"
+        },
+        {
+          "exec": "yarn upgrade @aws-cdk/integ-tests-alpha @aws-cdk/lambda-layer-kubectl-v29 @aws-cdk/lambda-layer-kubectl-v30 @aws-cdk/lambda-layer-kubectl-v31 @babel/preset-env @babel/preset-typescript @stylistic/eslint-plugin @types/jest @types/node @types/semver @typescript-eslint/eslint-plugin @typescript-eslint/parser babel-jest commit-and-tag-version enhanced-resolve eslint-import-resolver-typescript eslint-plugin-import eslint jest jest-junit jest-unit jose jsii-diff jsii-docgen jsii-pacmak jsii-rosetta jsii projen ts-jest ts-node typescript semver @aws-cdk/integ-runner aws-cdk-lib constructs @aws-cdk/cli-lib-alpha @aws-crypto/sha256-js @aws-sdk/client-cloudformation @aws-sdk/client-eks @aws-sdk/client-sts @aws-sdk/credential-provider-node @kubernetes/client-node @smithy/protocol-http @smithy/signature-v4"
+        },
+        {
+          "exec": "npx projen"
+        },
+        {
+          "spawn": "post-upgrade"
         }
       ]
     },
