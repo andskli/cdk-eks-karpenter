@@ -12,6 +12,10 @@ const project = new awscdk.AwsCdkConstructLibrary({
 
   majorVersion: 1,
 
+  deps: [
+    'js-yaml',
+  ],
+  
   devDeps: [
     '@aws-cdk/lambda-layer-kubectl-v24',
     '@aws-cdk/lambda-layer-kubectl-v25',
@@ -21,6 +25,8 @@ const project = new awscdk.AwsCdkConstructLibrary({
     '@aws-cdk/lambda-layer-kubectl-v29',
     '@aws-cdk/lambda-layer-kubectl-v30',
     '@aws-cdk/lambda-layer-kubectl-v31',
+    '@types/js-yaml',
+    'node-fetch',
   ],
   bundledDeps: [
     'semver',
